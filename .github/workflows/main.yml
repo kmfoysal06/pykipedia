@@ -1,0 +1,71 @@
+name: Deploy demo site
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+concurrency:
+  group: ftp-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Brotli
+        run: python -m pip install --upgrade pip brotli
+
+      - name: Generate smoldata.json
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import brotli
+
+          source = Path("smoldata.json.br").read_bytes()
+          Path("smoldata.json").write_bytes(brotli.decompress(source))
+          PY
+
+      - name: Install FTP client
+        run: sudo apt-get update && sudo apt-get install -y lftp
+
+      - name: Upload site to FTP
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
+          FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}
+        run: |
+          set -euo pipefail
+
+          : "${FTP_HOST:?Set FTP_HOST in repository secrets}"
+          : "${FTP_USERNAME:?Set FTP_USERNAME in repository secrets}"
+          : "${FTP_PASSWORD:?Set FTP_PASSWORD in repository secrets}"
+
+          remote_dir="${FTP_REMOTE_DIR:-/}"
+          ftp_port="${FTP_PORT:-21}"
+
+          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "$FTP_HOST" -p "$ftp_port" <<LFTP
+          set ftp:ssl-allow no
+          set net:max-retries 2
+          set net:timeout 20
+          mirror -R --delete --verbose \
+            --exclude-glob .git/ \
+            --exclude-glob .github/ \
+            --exclude-glob smoldata.json.br \
+            . "$remote_dir"
+          bye
+          LFTP
