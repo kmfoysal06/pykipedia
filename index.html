@@ -563,6 +563,7 @@
         <button data-icon="⬇️" id="install" class="hidden">Install</button>
     </nav>
     <div class="posts"></div>
+    <div class="stats" id="postsCount">Posts in memory: 0/50</div>
     <div id="startScreen" popover=manual>
         <div><h1>Xikipedia</h1><h2 style="font-size: 100%;opacity:0.85;font-style:italic">by <a href="https://lyra.horse">rebane2001</a></h2></div>
         <p><strong>Xikipedia</strong> is a pseudo social media feed that algorithmically shows you content from <a href="https://simple.wikipedia.org/">Simple Wikipedia</a>. It is made as a demonstration of how even a basic non-ML algorithm with no data from other users can quickly learn what you engage with to suggest you more similar content. The algorithm runs locally and no data leaves your device.</p>
@@ -598,6 +599,8 @@
         <p>Whether to store your algorithm data locally (the data still never leaves your device). If this is turned off, your feed will start from scratch every time.</p>
         <label>Open links in English Wikipedia<input id="setting-openMainWiki" type=checkbox></label>
         <p>The articles are pulled from Simple English Wikipedia, but you can choose to still open them in (non-Simple) English Wikipedia.</p>
+        <label>Max posts in memory (<span id="setting-maxPostsValue">50</span>)<input id="setting-maxPosts" type="range" min="10" max="200" step="1" value="50"></label>
+        <p>Limits how many posts stay loaded at once to reduce memory usage on low-end devices.</p>
         <pseudo-label>Theme
         <radio-picker aria-label="Theme picker" role="radiogroup">
             <label><input type="radio" name="theme" id="theme-auto" checked>Auto</label>
@@ -688,11 +691,22 @@
     let postsWithoutLike = 0;
 
     const HTML_VERSION = "1.1.4";
+    const MIN_POSTS_LIMIT = 10;
+    const DEFAULT_POSTS_LIMIT = 50;
+    const MAX_POSTS_LIMIT_CAP = 200;
+
+    function clampPostsLimit(limitValue) {
+        const parsedLimit = Number.parseInt(limitValue, 10);
+        if (Number.isNaN(parsedLimit))
+            return DEFAULT_POSTS_LIMIT;
+        return Math.max(MIN_POSTS_LIMIT, Math.min(MAX_POSTS_LIMIT_CAP, parsedLimit));
+    }
 
     function loadSettings() {
         const baseSettings = {
             storeData: true,
             openMainWiki: true,
+            maxPosts: DEFAULT_POSTS_LIMIT,
             dataSize: 228005406,
             profile: "default",
             profiles: ["default"],
@@ -700,9 +714,12 @@
         };
         const loadedSettings = JSON.parse(localStorage.getItem("xikipedia-settings") ?? '{}');
         const computedSettings = Object.assign(baseSettings, loadedSettings);
+        computedSettings.maxPosts = clampPostsLimit(computedSettings.maxPosts);
         document.querySelector(`#${computedSettings.theme}`).checked = true;
         document.getElementById("setting-storeData").checked = computedSettings.storeData;
         document.getElementById("setting-openMainWiki").checked = computedSettings.openMainWiki;
+        document.getElementById("setting-maxPosts").value = computedSettings.maxPosts;
+        document.getElementById("setting-maxPostsValue").innerText = computedSettings.maxPosts;
         return computedSettings;
     }
 
@@ -710,6 +727,11 @@
         settings.theme = document.querySelector('[name=theme]:checked')?.id ?? "theme-auto";
         settings.storeData = document.getElementById("setting-storeData").checked;
         settings.openMainWiki = document.getElementById("setting-openMainWiki").checked;
+        settings.maxPosts = clampPostsLimit(document.getElementById("setting-maxPosts").value);
+        document.getElementById("setting-maxPosts").value = settings.maxPosts;
+        document.getElementById("setting-maxPostsValue").innerText = settings.maxPosts;
+        MAX_POSTS_LIMIT = settings.maxPosts;
+        cleanupOldPosts();
         localStorage.setItem("xikipedia-settings", JSON.stringify(settings));
     }
 
@@ -734,9 +756,14 @@
     }
 
     const settings = loadSettings();
+    let MAX_POSTS_LIMIT = settings.maxPosts;
 
     const DATA_SIZE = settings.dataSize;
     const DATA_URL = `smoldata.json?${DATA_SIZE}`;
+    const postsEl = document.querySelector(".posts");
+    const postsCountEl = document.getElementById("postsCount");
+    const settingMaxPostsEl = document.getElementById("setting-maxPosts");
+    const settingMaxPostsValueEl = document.getElementById("setting-maxPostsValue");
 
     const startBtn = document.getElementById("startBtn");
     const categoryPickList = document.getElementById("categoryPickList");
@@ -754,6 +781,18 @@
     const storeDataWarning = document.getElementById("storeDataWarning");
 
     settingsModal.querySelectorAll("input").forEach(e => e.onchange = saveSettings);
+    settingMaxPostsEl.oninput = () => settingMaxPostsValueEl.innerText = settingMaxPostsEl.value;
+
+    function updatePostsCount() {
+        postsCountEl.innerText = `Posts in memory: ${postsEl.childElementCount}/${MAX_POSTS_LIMIT}`;
+    }
+
+    function cleanupOldPosts() {
+        while (postsEl.childElementCount > MAX_POSTS_LIMIT)
+            postsEl.firstElementChild?.remove();
+        updatePostsCount();
+    }
+    cleanupOldPosts();
 
     categorySearchInput.oninput = () => {
         const searchText = categorySearchInput.value;
@@ -1069,7 +1108,8 @@
         //nextPost.allCategories.forEach(e => categoryScores[e] -= 1);
         engagePost(nextPost, -5);
         postsWithoutLike++;
-        document.querySelector(".posts").appendChild(postDiv);
+        postsEl.appendChild(postDiv);
+        cleanupOldPosts();
     }
 
     function getNextPost() {
