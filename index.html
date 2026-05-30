@@ -1195,17 +1195,25 @@ async function* streamToAsyncIterable(stream) {
 
     async function getFileWithProgress(url) {
         const resp = await fetch(url, {cache: "force-cache"});
+        if (!resp.body)
+            return resp.json();
         let responseSize = 0;
-        const bytes = new Uint8Array(DATA_SIZE);
+        const chunks = [];
         for await (const chunk of streamToAsyncIterable(resp.body)) {
             if (Math.floor(responseSize/DATA_SIZE*100) < Math.floor((responseSize+chunk.length)/DATA_SIZE*100))
                 startBtn.innerText = `Xikipedia is loading... (${Math.floor(responseSize/DATA_SIZE*100)}% of 34MB loaded)`;
-            bytes.set(chunk, responseSize);
+            chunks.push(chunk);
             responseSize += chunk.length;
         }
         startBtn.innerText = `Xikipedia is loading... (100% of 34MB loaded)`;
         await new Promise(requestAnimationFrame);
         await new Promise(requestAnimationFrame);
+        const bytes = new Uint8Array(responseSize);
+        let offset = 0;
+        for (const chunk of chunks) {
+            bytes.set(chunk, offset);
+            offset += chunk.length;
+        }
         return JSON.parse(new TextDecoder().decode(bytes));
     }
 
